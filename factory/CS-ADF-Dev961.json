@@ -1,0 +1,12 @@
+{
+	"name": "CS-ADF-Dev961",
+	"properties": {
+		"globalParameters": {
+			"env": {
+				"type": "string",
+				"value": "dev"
+			}
+		}
+	},
+	"location": "eastus"
+}

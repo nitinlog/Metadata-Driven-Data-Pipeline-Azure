@@ -1,0 +1,1042 @@
+{
+	"name": "1a_pl_dim_gcp_to_Azure_full_load",
+	"properties": {
+		"activities": [
+			{
+				"name": "metadata_lookup",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureDatabricksDeltaLakeSource",
+						"query": {
+							"value": "@concat('SELECT param.*, control.* FROM metadata_schema.tbl_parameters AS param, metadata_schema.tbl_source_control as control WHERE job_id =', pipeline().parameters.job_id)\n\n",
+							"type": "Expression"
+						}
+					},
+					"dataset": {
+						"referenceName": "ds_metadata_adb_deltalake",
+						"type": "DatasetReference"
+					}
+				}
+			},
+			{
+				"name": "get_source_file_names",
+				"type": "GetMetadata",
+				"dependsOn": [
+					{
+						"activity": "metadata_lookup",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "ds_input_gcp",
+						"type": "DatasetReference",
+						"parameters": {
+							"bucket": {
+								"value": "@activity('metadata_lookup').output.firstRow.gcp_source_bucket",
+								"type": "Expression"
+							},
+							"folder": {
+								"value": "@activity('metadata_lookup').output.firstRow.source_file_path",
+								"type": "Expression"
+							},
+							"file": "*"
+						}
+					},
+					"fieldList": [
+						"childItems"
+					],
+					"storeSettings": {
+						"type": "GoogleCloudStorageReadSettings",
+						"recursive": true,
+						"modifiedDatetimeStart": {
+							"value": "@convertToUtc(activity('metadata_lookup').output.firstRow.watermark_column, 'India Standard Time')\n",
+							"type": "Expression"
+						},
+						"enablePartitionDiscovery": false
+					},
+					"formatSettings": {
+						"type": "DelimitedTextReadSettings"
+					}
+				}
+			},
+			{
+				"name": "file_count_check",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "get_source_file_names",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@greater(length(activity('get_source_file_names').output.childItems),0)",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "No_files_available_to_ingest_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "No latest files available in source to ingest",
+										"type": "Expression"
+									},
+									"status": "Success",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "End_pipeline_no_files_to_ingest",
+							"type": "Fail",
+							"dependsOn": [
+								{
+									"activity": "validation_failed_email_alert_copy",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"message": "No files available in sourec location to ingest",
+								"errorCode": "No files available in source location to ingest"
+							}
+						},
+						{
+							"name": "validation_failed_email_alert_copy",
+							"type": "WebActivity",
+							"dependsOn": [
+								{
+									"activity": "No_files_available_to_ingest_log",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"method": "POST",
+								"url": {
+									"value": "@activity('metadata_lookup').output.firstRow.logic_app_url",
+									"type": "Expression"
+								},
+								"body": {
+									"value": "{\n    \"to\":\"@{activity('metadata_lookup').output.firstRow.email_id}\",\n    \"subject\":\" @{concat('[',pipeline().globalParameters.env,']',pipeline().Pipeline,':[Completed]')}\",\n    \"email_body\":\"\n   \n    <!DOCTYPE html>\n<html>\n<body>\n    Hi all,<br/>\n    Please find below the status for @{pipeline().Pipeline}<br/><br/>\n    \n    <table>\n        <tr>\n            <th style='text-align: left;'>Parameters</th>\n            <th style='text-align: left;'>Value</th>\n        </tr>\n        <tr>\n            <td>JobID</td>\n            <td>@{pipeline().parameters.job_id}</td>\n        </tr>\n        <tr>\n            <td>Status</td>\n            <td><span style='color:Green';>Completed</span></td>\n        </tr>\n        <tr>\n            <td>Scheduled</td>\n            <td>@{pipeline().TriggerType}</td>\n        </tr>\n        <tr>\n            <td>LoadID</td>\n            <td>@{pipeline().RunId}</td>\n        </tr>\n        <tr>\n            <td>Alert</td>\n            <td><span style='color:Red';>No files available in source location to ingest.</td>\n        </tr>\n        <tr>\n            <td>JobStart</td>\n            <td>@{variables('start_time')}</td>\n        </tr>\n        <tr>\n            <td>JobEnd</td>\n            <td>@{formatDateTime(convertFromUtc(utcNow(), 'India Standard Time'), 'yyyy-MM-dd HH:mm:ss')\n}</td>\n        </tr>\n    </table><br/><br/><br/>\n    \n    <p>Clever Studies team.</p>\n</body>\n</html>\n    \"\n}",
+									"type": "Expression"
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "file_name_and_extension_check",
+				"type": "Filter",
+				"dependsOn": [
+					{
+						"activity": "file_count_check",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('get_source_file_names').output.childItems",
+						"type": "Expression"
+					},
+					"condition": {
+						"value": "@and(\n    startswith(item().name, 'telecom_dim'),\n    endswith(item().name, '.csv')\n)\n",
+						"type": "Expression"
+					}
+				}
+			},
+			{
+				"name": "file_proper_format_count_check",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "file_name_and_extension_check",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@greater(length(activity('file_name_and_extension_check').output.Value),0)",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "No_proper_format_files_to_ingest1",
+							"type": "DatabricksNotebook",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "No proper file format available in source to ingest",
+										"type": "Expression"
+									},
+									"status": "Success",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "End_pipeline_no_proper_file_formats_to_ingest",
+							"type": "Fail",
+							"dependsOn": [
+								{
+									"activity": "No_proper_format_files_to_ingest1",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"message": "No proper file formats available in sourec location to ingest",
+								"errorCode": "No proper file format available in source location to ingest"
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "for_each_source_file",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "file_proper_format_count_check",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('file_name_and_extension_check').output.Value",
+						"type": "Expression"
+					},
+					"isSequential": true,
+					"activities": [
+						{
+							"name": "get_file_last_modified_time",
+							"type": "GetMetadata",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"dataset": {
+									"referenceName": "ds_input_gcp",
+									"type": "DatasetReference",
+									"parameters": {
+										"bucket": {
+											"value": "@activity('metadata_lookup').output.firstRow.gcp_source_bucket",
+											"type": "Expression"
+										},
+										"folder": {
+											"value": "@activity('metadata_lookup').output.firstRow.source_file_path",
+											"type": "Expression"
+										},
+										"file": {
+											"value": "@item().name",
+											"type": "Expression"
+										}
+									}
+								},
+								"fieldList": [
+									"lastModified"
+								],
+								"storeSettings": {
+									"type": "GoogleCloudStorageReadSettings",
+									"recursive": true,
+									"modifiedDatetimeStart": {
+										"value": "@activity('metadata_lookup').output.firstRow.watermark_column",
+										"type": "Expression"
+									},
+									"enablePartitionDiscovery": false
+								},
+								"formatSettings": {
+									"type": "DelimitedTextReadSettings"
+								}
+							}
+						},
+						{
+							"name": "gcp_to_azure",
+							"type": "Copy",
+							"dependsOn": [
+								{
+									"activity": "get_file_last_modified_time",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "DelimitedTextSource",
+									"storeSettings": {
+										"type": "GoogleCloudStorageReadSettings",
+										"recursive": true,
+										"enablePartitionDiscovery": false
+									},
+									"formatSettings": {
+										"type": "DelimitedTextReadSettings"
+									}
+								},
+								"sink": {
+									"type": "DelimitedTextSink",
+									"storeSettings": {
+										"type": "AzureBlobFSWriteSettings"
+									},
+									"formatSettings": {
+										"type": "DelimitedTextWriteSettings",
+										"quoteAllText": true,
+										"fileExtension": ".txt"
+									}
+								},
+								"enableStaging": false,
+								"translator": {
+									"type": "TabularTranslator",
+									"typeConversion": true,
+									"typeConversionSettings": {
+										"allowDataTruncation": true,
+										"treatBooleanAsNumber": false
+									}
+								}
+							},
+							"inputs": [
+								{
+									"referenceName": "ds_input_gcp",
+									"type": "DatasetReference",
+									"parameters": {
+										"bucket": {
+											"value": "@activity('metadata_lookup').output.firstRow.gcp_source_bucket",
+											"type": "Expression"
+										},
+										"folder": {
+											"value": "@activity('metadata_lookup').output.firstRow.source_file_path",
+											"type": "Expression"
+										},
+										"file": {
+											"value": "@item().name",
+											"type": "Expression"
+										}
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "ds_output_csv",
+									"type": "DatasetReference",
+									"parameters": {
+										"adls_container": {
+											"value": "@activity('metadata_lookup').output.firstRow.container_name",
+											"type": "Expression"
+										},
+										"adls_file": {
+											"value": "@item().name",
+											"type": "Expression"
+										}
+									}
+								}
+							]
+						},
+						{
+							"name": "file_copy_success_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "gcp_to_azure",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@concat('Copied file',item().name, 'to landing container.')",
+										"type": "Expression"
+									},
+									"status": "success",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "file_copy_failed_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "gcp_to_azure",
+									"dependencyConditions": [
+										"Failed"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@activity('gcp_to_azure').Error.message",
+										"type": "Expression"
+									},
+									"status": "Failure",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "dbx_update_watermark_column",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "Trigger_1c_pl_dim_sub_raw_to_intermediate",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/dbx_update_watermark_column",
+								"baseParameters": {
+									"gcp_file_last_modified_time": {
+										"value": "@convertFromUtc(addSeconds(activity('get_file_last_modified_time').output.lastModified, 1), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									},
+									"job_id": {
+										"value": "@activity('metadata_lookup').output.firstRow.job_id",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "Trigger_1b_pl_dim_sub_landing_to_raw_full_load",
+							"type": "ExecutePipeline",
+							"dependsOn": [
+								{
+									"activity": "gcp_to_azure",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "1b_pl_dim_sub_landing_to_raw_full_load",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"metadata_lookup_values": {
+										"value": "@activity('metadata_lookup').output.firstRow",
+										"type": "Expression"
+									},
+									"source_file_last_modified_time": {
+										"value": "@activity('get_file_last_modified_time').output.lastModified",
+										"type": "Expression"
+									},
+									"souce_file_name": {
+										"value": "@item().name",
+										"type": "Expression"
+									},
+									"pipeline_start_time": {
+										"value": "@variables('start_time')",
+										"type": "Expression"
+									}
+								}
+							}
+						},
+						{
+							"name": "watermark_column_update_success_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "dbx_update_watermark_column",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@concat('Succesfully updated watermark column for source file',item().name, 'to ',convertFromUtc(addSeconds(activity('get_file_last_modified_time').output.lastModified, 1), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n )",
+										"type": "Expression"
+									},
+									"status": "success",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "watermark_column_update_failure_log_copy1",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "dbx_update_watermark_column",
+									"dependencyConditions": [
+										"Failed"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@activity('dbx_update_watermark_column').Error.message",
+										"type": "Expression"
+									},
+									"status": "failure",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "archive_source_files",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "Trigger_1b_pl_dim_sub_landing_to_raw_full_load",
+									"dependencyConditions": [
+										"Completed"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/archive_source_files",
+								"baseParameters": {
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"source_file_name": {
+										"value": "@item().name",
+										"type": "Expression"
+									},
+									"storage_account_name": {
+										"value": "@activity('metadata_lookup').output.firstRow.storage_account",
+										"type": "Expression"
+									},
+									"container": {
+										"value": "@activity('metadata_lookup').output.firstRow.container_name",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "archive_source_files_success_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "archive_source_files",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@concat('Succesfully archived source file ', item().name)\n ",
+										"type": "Expression"
+									},
+									"status": "success",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "archive _source_files_failure_log",
+							"type": "DatabricksNotebook",
+							"dependsOn": [
+								{
+									"activity": "archive_source_files",
+									"dependencyConditions": [
+										"Failed"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+								"baseParameters": {
+									"env": {
+										"value": "@pipeline().globalParameters.env",
+										"type": "Expression"
+									},
+									"pipeLineName": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"logMessage": {
+										"value": "@activity('archive_source_files').Error.message",
+										"type": "Expression"
+									},
+									"status": "failure",
+									"triggerType": {
+										"value": "@pipeline().TriggerType",
+										"type": "Expression"
+									},
+									"loadId": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"logTimeStamp": {
+										"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_databricks_compute",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "Trigger_1c_pl_dim_sub_raw_to_intermediate",
+							"type": "ExecutePipeline",
+							"dependsOn": [
+								{
+									"activity": "Trigger_1b_pl_dim_sub_landing_to_raw_full_load",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "1c_pl_dim_sub_raw_to_intermediate",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"metadata_lookup_values": {
+										"value": "@activity('metadata_lookup').output.firstRow",
+										"type": "Expression"
+									},
+									"source_file_last_modified_time": {
+										"value": "@activity('get_file_last_modified_time').output.lastModified",
+										"type": "Expression"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "pipeline_inprogress_email_alert",
+				"type": "WebActivity",
+				"dependsOn": [
+					{
+						"activity": "capture_pipeline_start_time",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					},
+					{
+						"activity": "metadata_lookup",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"method": "POST",
+					"url": {
+						"value": "@activity('metadata_lookup').output.firstRow.logic_app_url",
+						"type": "Expression"
+					},
+					"body": {
+						"value": "{\n    \"to\":\"@{activity('metadata_lookup').output.firstRow.email_id}\",\n    \"subject\":\" @{concat('[',pipeline().globalParameters.env,']',pipeline().Pipeline,':[InProgress]')}\",\n    \"email_body\":\"\n   \n    <!DOCTYPE html>\n<html>\n<body>\n    Hi all,<br/>\n    Please find below the status for @{pipeline().Pipeline}<br/><br/>\n    \n    <table>\n        <tr>\n            <th style='text-align: left;'>Parameters</th>\n            <th style='text-align: left;'>Value</th>\n        </tr>\n        <tr>\n            <td>JobID</td>\n            <td>@{pipeline().parameters.job_id}</td>\n        </tr>\n        <tr>\n            <td>Status</td>\n            <td><span style='color:Blue';>In Progress</span></td>\n        </tr>\n        <tr>\n            <td>Scheduled</td>\n            <td>@{pipeline().TriggerType}</td>\n        </tr>\n        <tr>\n            <td>LoadID</td>\n            <td>@{pipeline().RunId}</td>\n        </tr>\n        <tr>\n            <td>JobStart</td>\n            <td>@{variables('start_time')}</td>\n        </tr>\n    </table><br/><br/><br/>\n    \n    <p>Clever Studies team.</p>\n</body>\n</html>\n    \"\n}",
+						"type": "Expression"
+					}
+				}
+			},
+			{
+				"name": "capture_pipeline_start_time",
+				"type": "SetVariable",
+				"dependsOn": [],
+				"policy": {
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "start_time",
+					"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n"
+				}
+			},
+			{
+				"name": "pipeline_success_email_alert_copy",
+				"type": "WebActivity",
+				"dependsOn": [
+					{
+						"activity": "for_each_source_file",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"method": "POST",
+					"url": {
+						"value": "@activity('metadata_lookup').output.firstRow.logic_app_url",
+						"type": "Expression"
+					},
+					"body": {
+						"value": "{\n    \"to\":\"@{activity('metadata_lookup').output.firstRow.email_id}\",\n    \"subject\":\" @{concat('[',pipeline().globalParameters.env,']',pipeline().Pipeline,':[Completed]')}\",\n    \"email_body\":\"\n   \n    <!DOCTYPE html>\n<html>\n<body>\n    Hi all,<br/>\n    Please find below the status for @{pipeline().Pipeline}<br/><br/>\n    \n    <table>\n        <tr>\n            <th style='text-align: left;'>Parameters</th>\n            <th style='text-align: left;'>Value</th>\n        </tr>\n        <tr>\n            <td>JobID</td>\n            <td>@{pipeline().parameters.job_id}</td>\n        </tr>\n        <tr>\n            <td>Status</td>\n            <td><span style='color:Green';>Completed</span></td>\n        </tr>\n        <tr>\n            <td>Scheduled</td>\n            <td>@{pipeline().TriggerType}</td>\n        </tr>\n        <tr>\n            <td>LoadID</td>\n            <td>@{pipeline().RunId}</td>\n        </tr>\n        <tr>\n            <td>JobStart</td>\n            <td>@{variables('start_time')}</td>\n        </tr>\n        <tr>\n            <td>JobEnd</td>\n            <td>@{formatDateTime(convertFromUtc(utcNow(), 'India Standard Time'), 'yyyy-MM-dd HH:mm:ss')\n}</td>\n        </tr>\n    </table><br/><br/><br/>\n    \n    <p>Clever Studies team.</p>\n</body>\n</html>\n    \"\n}",
+						"type": "Expression"
+					}
+				}
+			}
+		],
+		"parameters": {
+			"job_id": {
+				"type": "string",
+				"defaultValue": "201"
+			}
+		},
+		"variables": {
+			"start_time": {
+				"type": "String"
+			}
+		},
+		"annotations": []
+	}
+}

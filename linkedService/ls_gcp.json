@@ -1,0 +1,24 @@
+{
+	"name": "ls_gcp",
+	"properties": {
+		"annotations": [],
+		"type": "GoogleCloudStorage",
+		"typeProperties": {
+			"serviceUrl": "https://storage.googleapis.com",
+			"accessKeyId": "GOOG1ECZ2PBGCUQQ4UXYUMIR42RAUNWAVUNVC5LKIXQWOVSKMBWDWM67KHPXG",
+			"secretAccessKey": {
+				"type": "AzureKeyVaultSecret",
+				"store": {
+					"referenceName": "ls_AzureKeyVault",
+					"type": "LinkedServiceReference"
+				},
+				"secretName": "gcp-secret"
+			}
+		},
+		"connectVia": {
+			"referenceName": "shir-telecom",
+			"type": "IntegrationRuntimeReference"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/linkedservices"
+}

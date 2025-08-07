@@ -1,0 +1,211 @@
+{
+	"name": "1b_pl_dim_sub_landing_to_raw_full_load",
+	"properties": {
+		"activities": [
+			{
+				"name": "dim_landing_to_raw",
+				"type": "DatabricksNotebook",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 1,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/databricks_notebooks/dim_landing_to_raw",
+					"baseParameters": {
+						"LoadID": {
+							"value": "@pipeline()?.TriggeredByPipelineRunId",
+							"type": "Expression"
+						},
+						"container": {
+							"value": "@pipeline().parameters.metadata_lookup_values.container_name",
+							"type": "Expression"
+						},
+						"gcp_file_last_modified_time": {
+							"value": "@pipeline().parameters.source_file_last_modified_time",
+							"type": "Expression"
+						},
+						"raw_schema": {
+							"value": "@pipeline().parameters.metadata_lookup_values.raw_schema",
+							"type": "Expression"
+						},
+						"raw_table": {
+							"value": "@pipeline().parameters.metadata_lookup_values.raw_tbl",
+							"type": "Expression"
+						},
+						"source_file_name": {
+							"value": "@pipeline().parameters.souce_file_name",
+							"type": "Expression"
+						},
+						"storage_account_name": {
+							"value": "@pipeline().parameters.metadata_lookup_values.storage_account",
+							"type": "Expression"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "ls_databricks_compute",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_landing_to_raw_success_log",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "dim_landing_to_raw",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+					"baseParameters": {
+						"env": {
+							"value": "@pipeline().globalParameters.env",
+							"type": "Expression"
+						},
+						"pipeLineName": {
+							"value": "@pipeline().Pipeline",
+							"type": "Expression"
+						},
+						"logMessage": {
+							"value": "@concat(\n  'Source file contains ',\n  activity('dim_landing_to_raw').output.runOutput[0],\n  ' records and inserted ',\n  activity('dim_landing_to_raw').output.runOutput[1],\n  ' records in raw layer table ',\n  pipeline().parameters.metadata_lookup_values.raw_tbl\n)\n",
+							"type": "Expression"
+						},
+						"status": "success",
+						"triggerType": {
+							"value": "@pipeline().TriggerType",
+							"type": "Expression"
+						},
+						"loadId": {
+							"value": "@pipeline()?.TriggeredByPipelineRunId",
+							"type": "Expression"
+						},
+						"logTimeStamp": {
+							"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+							"type": "Expression"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "ls_databricks_compute",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_landing_to_raw_failure_log",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "dim_landing_to_raw",
+						"dependencyConditions": [
+							"Failed"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/databricks_notebooks/log_record_tbl_insert",
+					"baseParameters": {
+						"env": {
+							"value": "@pipeline().globalParameters.env",
+							"type": "Expression"
+						},
+						"pipeLineName": {
+							"value": "@pipeline().Pipeline",
+							"type": "Expression"
+						},
+						"logMessage": {
+							"value": "@activity('dim_landing_to_raw').output.Error.Message",
+							"type": "Expression"
+						},
+						"status": "failure",
+						"triggerType": {
+							"value": "@pipeline().TriggerType",
+							"type": "Expression"
+						},
+						"loadId": {
+							"value": "@pipeline()?.TriggeredByPipelineRunId",
+							"type": "Expression"
+						},
+						"logTimeStamp": {
+							"value": "@convertFromUtc(utcNow(), 'India Standard Time', 'yyyy-MM-dd HH:mm:ss')\n",
+							"type": "Expression"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "ls_databricks_compute",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_landing_to_raw_fail_email_alert_copy",
+				"type": "WebActivity",
+				"dependsOn": [
+					{
+						"activity": "dim_landing_to_raw",
+						"dependencyConditions": [
+							"Failed"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"method": "POST",
+					"url": {
+						"value": "@pipeline().parameters.metadata_lookup_values.logic_app_url",
+						"type": "Expression"
+					},
+					"body": {
+						"value": "{\n    \"to\":\"pipeline().parameters.metadata_lookup_values.firstRow.email_id}\",\n    \"subject\":\" @{concat('[',pipeline().globalParameters.env,']',pipeline().Pipeline,':[Dim landing to raw File Copy Failed]')}\",\n    \"email_body\":\"\n   \n    <!DOCTYPE html>\n<html>\n<body>\n    Hi all,<br/>\n    Please find below the status for @{pipeline().Pipeline}<br/><br/>\n    \n    <table>\n        <tr>\n            <th style='text-align: left;'>Parameters</th>\n            <th style='text-align: left;'>Value</th>\n        </tr>\n        <tr>\n            <td>JobID</td>\n            <td>@{pipeline().parameters.metadata_lookup_values}</td>\n        </tr>\n        <tr>\n            <td>Status</td>\n            <td><span style='color:Red';>Failed</span></td>\n        </tr>\n        <tr>\n            <td>Scheduled</td>\n            <td>@{pipeline().TriggerType}</td>\n        </tr>\n        <tr>\n            <td>LoadID</td>\n            <td>@{pipeline()?.TriggeredByPipelineRunId}</td>\n        </tr>\n        <tr>\n            <td>JobStart</td>\n            <td>@{pipeline().parameters.pipeline_start_time}</td>\n        </tr>\n        <tr>\n            <td>FileName</td>\n            <td>@{pipeline().parameters.souce_file_name}</td>\n        </tr>\n        <tr>\n            <td>Error</td>\n            <td>@{activity('dim_landing_to_raw').Error.message\n}</td>\n        </tr>\n    </table><br/><br/><br/>\n    \n    <p>Clever Studies team.</p>\n</body>\n</html>\n    \"\n}",
+						"type": "Expression"
+					}
+				}
+			}
+		],
+		"parameters": {
+			"metadata_lookup_values": {
+				"type": "object"
+			},
+			"source_file_last_modified_time": {
+				"type": "string"
+			},
+			"souce_file_name": {
+				"type": "string"
+			},
+			"pipeline_start_time": {
+				"type": "string"
+			}
+		},
+		"annotations": []
+	}
+}

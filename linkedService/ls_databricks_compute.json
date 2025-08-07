@@ -1,0 +1,17 @@
+{
+	"name": "ls_databricks_compute",
+	"properties": {
+		"annotations": [],
+		"type": "AzureDatabricks",
+		"typeProperties": {
+			"domain": "https://adb-4431597957075262.2.azuredatabricks.net",
+			"authentication": "MSI",
+			"workspaceResourceId": "/subscriptions/9652785e-1700-4d4c-a428-77856f9c98bf/resourceGroups/CS-Dev-environment/providers/Microsoft.Databricks/workspaces/Cs-AzureDatabricks-dev",
+			"existingClusterId": "0726-193932-33d8rsf6"
+		},
+		"connectVia": {
+			"referenceName": "shir-telecom",
+			"type": "IntegrationRuntimeReference"
+		}
+	}
+}
