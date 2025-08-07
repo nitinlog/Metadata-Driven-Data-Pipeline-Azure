@@ -17,43 +17,43 @@ This project implements a modern data platform on Microsoft Azure, featuring a m
 
 ## Tech Stack
 
-* [cite_start]**Cloud Platforms**: Microsoft Azure, Google Cloud Platform (GCP) 
-* [cite_start]**Data Ingestion & Orchestration**: Azure Data Factory (ADF) 
-* [cite_start]**Data Processing**: Azure Databricks (PySpark) 
-* [cite_start]**Data Storage**: Azure Data Lake Storage (ADLS) Gen2 
-* [cite_start]**Data Governance**: Databricks Unity Catalog (UC), RBAC 
-* [cite_start]**Secrets Management**: Azure Key Vault 
-* [cite_start]**Alerting & Notifications**: Azure Logic Apps 
-* [cite_start]**CI/CD & DevOps**: Azure DevOps (ADO) 
+* **Cloud Platforms**: Microsoft Azure, Google Cloud Platform (GCP) 
+* **Data Ingestion & Orchestration**: Azure Data Factory (ADF) 
+* **Data Processing**: Azure Databricks (PySpark) 
+* **Data Storage**: Azure Data Lake Storage (ADLS) Gen2 
+* **Data Governance**: Databricks Unity Catalog (UC), RBAC 
+* **Secrets Management**: Azure Key Vault 
+* **Alerting & Notifications**: Azure Logic Apps 
+* **CI/CD & DevOps**: Azure DevOps (ADO) 
 
 ## Data Pipeline Overview
 
 The pipeline follows a medallion architecture to progressively refine data from its raw state to an analysis-ready format.
 
 1.  **Ingestion (GCP to Landing Zone)**
-    * [cite_start]ADF pipelines are used to ingest source CSV files from a Google Cloud Storage bucket into the ADLS Gen2 `landing` container.
-    * [cite_start]The pipeline framework is parameterized and includes checks for file availability, naming, and format.It supports both full and delta load patterns.
+    * ADF pipelines are used to ingest source CSV files from a Google Cloud Storage bucket into the ADLS Gen2 `landing` container.
+    * The pipeline framework is parameterized and includes checks for file availability, naming, and format.It supports both full and delta load patterns.
 
 2.  **Transformation (Landing -> Raw -> Intermediate)**
-    * [cite_start]Azure Databricks notebooks are triggered by ADF to process the data.
-    * [cite_start]**Landing to Raw**: Data is cleaned, and derived columns (`load_id`, `last_inserted_dttm_azure`) are added. [cite_start]Bad records are handled, and duplicates are checked. [cite_start]After processing, source files are archived.
-    * [cite_start]**Raw to Intermediate**: Business logic is applied using Databricks notebooks to merge and transform data into an intermediate format, preparing it for final aggregation.
+    * Azure Databricks notebooks are triggered by ADF to process the data.
+    * **Landing to Raw**: Data is cleaned, and derived columns (`load_id`, `last_inserted_dttm_azure`) are added. [cite_start]Bad records are handled, and duplicates are checked. After processing, source files are archived.
+    * **Raw to Intermediate**: Business logic is applied using Databricks notebooks to merge and transform data into an intermediate format, preparing it for final aggregation.
 
 3.  **Curated Layer & Analytics**
-    * [cite_start]A final ADF pipeline orchestrates Databricks notebooks to apply transformations like joins and CTEs, loading the data into the `curated` zone. This layer serves as the single source of truth for BI and analytics.
+    * A final ADF pipeline orchestrates Databricks notebooks to apply transformations like joins and CTEs, loading the data into the `curated` zone. This layer serves as the single source of truth for BI and analytics.
 
 4.  **Governance and Security**
-    * [cite_start]**Unity Catalog**: A metastore is created in Databricks Unity Catalog to govern the data assets[cite: 127, 128]. [cite_start]Tables created in the Hive Metastore are synced to Unity Catalog.
-    * [cite_start]**RBAC**: Role-Based Access Control is configured by creating user groups and assigning them specific permissions on schemas and tables within Unity Catalog to ensure data security.
+    * **Unity Catalog**: A metastore is created in Databricks Unity Catalog to govern the data assets.Tables created in the Hive Metastore are synced to Unity Catalog.
+    * **RBAC**: Role-Based Access Control is configured by creating user groups and assigning them specific permissions on schemas and tables within Unity Catalog to ensure data security.
 
 ## Key Features Demonstrated
 
-* **End-to-End ELT Pipeline**: Implementation of a complete, automated data pipeline from ingestion to analytics.
+* **End-to-End ETL Pipeline**: Implementation of a complete, automated data pipeline from ingestion to analytics.
 * **Medallion Architecture**: Data is structured into Bronze (raw), Silver (intermediate), and Gold (curated) layers to ensure data quality and governance.
-* [cite_start]**Hybrid Cloud Integration**: Ingestion of data from GCP into an Azure-native data platform.
-* [cite_start]**Delta and Full Load Patterns**: The framework is designed to handle both incremental (delta) and complete (full) data loads efficiently.
-* [cite_start]**Infrastructure as Code (IaC) Principles**: While not fully scripted with Terraform/ARM, the project follows a structured setup of resources, including VNet, subnets, and all necessary Azure services.
-* [cite_start]**Dynamic & Parameterized Pipelines**: Azure Data Factory pipelines are heavily parameterized for reusability and maintainability.
-* [cite_start]**Secrets Management**: Secure storage and retrieval of credentials and keys using Azure Key Vault, integrated with ADF and Databricks.
-* [cite_start]**Automated Alerting**: Azure Logic Apps are configured to send automated email notifications for pipeline status (in-progress, success, error) and data quality issues (count mismatch).
-* [cite_start]**CI/CD for DataOps**: The project plan includes creating and executing Azure DevOps release pipelines to deploy ADF and Databricks artifacts to a production environment.
+* **Hybrid Cloud Integration**: Ingestion of data from GCP into an Azure-native data platform.
+* **Delta and Full Load Patterns**: The framework is designed to handle both incremental (delta) and complete (full) data loads efficiently.
+* **Infrastructure as Code (IaC) Principles**: While not fully scripted with Terraform/ARM, the project follows a structured setup of resources, including VNet, subnets, and all necessary Azure services.
+* **Dynamic & Parameterized Pipelines**: Azure Data Factory pipelines are heavily parameterized for reusability and maintainability.
+* **Secrets Management**: Secure storage and retrieval of credentials and keys using Azure Key Vault, integrated with ADF and Databricks.
+* **Automated Alerting**: Azure Logic Apps are configured to send automated email notifications for pipeline status (in-progress, success, error) and data quality issues (count mismatch).
+* **CI/CD for DataOps**: The project plan includes creating and executing Azure DevOps release pipelines to deploy ADF and Databricks artifacts to a production environment.
