@@ -12,8 +12,7 @@ The objective is to build an end-to-end data pipeline that ingests, processes, a
 
 This project implements a modern data platform on Microsoft Azure, featuring a multi-layered data lake architecture and integrating with GCP for source data.
 
-*(You can embed your `Azure Project-2 Design.jpg` image here by placing it in your repository and adding the following line)*
-`![Architecture Diagram](Azure Project-2 Design.jpg)`
+
 
 ## Tech Stack
 
