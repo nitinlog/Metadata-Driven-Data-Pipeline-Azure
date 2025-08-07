@@ -1,6 +1,6 @@
 
 
-# Azure End-to-End Data Engineering Project: Telecom Analytics
+# Data-Driven Telecom Decision Platform in Azure:
 
 ## Business Use Case
 
